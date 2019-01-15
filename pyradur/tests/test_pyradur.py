@@ -29,7 +29,7 @@ import unittest
 import shutil
 import os
 
-class Common(unittest.TestCase):
+class CommonTests(object):
     use_cache = True
 
     def _server_thread(self, event):
@@ -221,7 +221,7 @@ class Common(unittest.TestCase):
         self.assertEqual(a['foo'], 'bar')
         self.assertEqual(b['foo'], 'baz')
 
-class NoCacheTests(Common):
+class NoCacheTests(CommonTests, unittest.TestCase):
     use_cache = False
 
     def test_cached(self):
@@ -259,7 +259,7 @@ class NoCacheTests(Common):
         a.sync()
         self.assertEqual(b['foo'], 'test')
 
-class CacheTests(Common):
+class CacheTests(CommonTests, unittest.TestCase):
     def test_cached(self):
         a = self.get_dict('var', share_connection=False)
         b = self.get_dict('var', share_connection=False)
