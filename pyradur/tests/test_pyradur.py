@@ -29,7 +29,9 @@ import unittest
 import shutil
 import os
 
-class BasicTests(unittest.TestCase):
+class Common(unittest.TestCase):
+    use_cache = True
+
     def _server_thread(self, event):
         self.server.db.add_db('var', Sqlite3DB(':memory:'))
         event.set()
@@ -56,8 +58,11 @@ class BasicTests(unittest.TestCase):
             self.server.close()
             raise e
 
+    def get_dict(self, name, share_connection=True):
+        return Dict(self.sock_path, name, use_cache=self.use_cache, share_connection=share_connection)
+
     def test_basic_get_set(self):
-        d = Dict(self.sock_path, 'var')
+        d = self.get_dict('var')
         d['foo'] = 'bar'
         self.assertEqual(d['foo'], 'bar')
 
@@ -65,14 +70,14 @@ class BasicTests(unittest.TestCase):
             d['baz']
 
     def test_get_set_shared(self):
-        a = Dict(self.sock_path, 'var')
-        b = Dict(self.sock_path, 'var')
+        a = self.get_dict('var')
+        b = self.get_dict('var')
         a['foo'] = 'bar'
         self.assertEqual(b['foo'], 'bar')
 
     def test_get_set_nonshared(self):
-        a = Dict(self.sock_path, 'var', share_connection=False)
-        b = Dict(self.sock_path, 'var', share_connection=False)
+        a = self.get_dict('var', share_connection=False)
+        b = self.get_dict('var', share_connection=False)
         a['foo'] = 'bar'
         a.sync()
         self.assertEqual(b['foo'], 'bar')
@@ -81,9 +86,13 @@ class BasicTests(unittest.TestCase):
         a.sync()
         self.assertFalse('baz' in b)
 
+        a.set('test', 'blah')
+        a.sync()
+        self.assertEqual(b['test'], 'blah')
+
     def test_del_nonshared(self):
-        a = Dict(self.sock_path, 'var', share_connection=False)
-        b = Dict(self.sock_path, 'var', share_connection=False)
+        a = self.get_dict('var', share_connection=False)
+        b = self.get_dict('var', share_connection=False)
 
         a['foo'] = 'bar'
         a.sync()
@@ -95,15 +104,15 @@ class BasicTests(unittest.TestCase):
             b['foo']
 
     def test_setdefault(self):
-        a = Dict(self.sock_path, 'var', share_connection=False)
-        b = Dict(self.sock_path, 'var', share_connection=False)
+        a = self.get_dict('var', share_connection=False)
+        b = self.get_dict('var', share_connection=False)
 
         self.assertEqual(a.setdefault('foo', 'bar'), 'bar')
         a.sync()
         self.assertEqual(b['foo'], 'bar')
 
     def test_server_suspend(self):
-        a = Dict(self.sock_path, 'var', share_connection=False)
+        a = self.get_dict('var', share_connection=False)
         a['foo'] = 'bar'
 
         with self.server.suspended():
@@ -113,64 +122,47 @@ class BasicTests(unittest.TestCase):
         self.assertEqual(a['foo'], 'test')
 
     def test_contains(self):
-        a = Dict(self.sock_path, 'var', share_connection=False)
-        b = Dict(self.sock_path, 'var', share_connection=False)
+        a = self.get_dict('var', share_connection=False)
+        b = self.get_dict('var', share_connection=False)
 
         a['foo'] = 'bar'
         a.sync()
         self.assertTrue('foo' in b)
         self.assertFalse('bar' in b)
 
-    def test_cached(self):
-        a = Dict(self.sock_path, 'var', share_connection=False)
-        b = Dict(self.sock_path, 'var', share_connection=False)
+    def test_close(self):
+        import gc
+
+        a = self.get_dict('var')
+        b = self.get_dict('var', share_connection=False)
+        c = self.get_dict('var')
 
         a['foo'] = 'bar'
         a.sync()
+
         self.assertEqual(b['foo'], 'bar')
-        self.assertTrue(b.is_cached('foo'))
+        self.assertEqual(c['foo'], 'bar')
 
-        with self.server.suspended():
-            a['foo'] = 'test'
-            self.assertEqual(b['foo'], 'bar')
+        a.close()
 
-            b.invalidate('foo')
-            self.assertFalse(b.is_cached('foo'))
+        c['baz'] = 'bat'
+        c.sync()
 
-        # Note: No sync should be necessary because of the invalidation
-        self.assertEqual(b['foo'], 'test')
+        self.assertEqual(b['baz'], 'bat')
 
-    def test_invalidate_all(self):
-        a = Dict(self.sock_path, 'var', share_connection=False)
-        b = Dict(self.sock_path, 'var', share_connection=False)
+        del c
+        del a
 
-        a['foo'] = 'bar'
-        a['baz'] = 'bop'
-        a.sync()
-        self.assertEqual(b['foo'], 'bar')
-        self.assertEqual(b['baz'], 'bop')
-        self.assertTrue(b.is_cached('foo'))
-        self.assertTrue(b.is_cached('baz'))
+        gc.collect()
 
-        with self.server.suspended():
-            a['foo'] = 'test'
-            a['baz'] = 'test2'
-            self.assertEqual(b['foo'], 'bar')
-            self.assertEqual(b['baz'], 'bop')
+        b['test'] = 'blah'
 
-            b.invalidate_all()
-            self.assertFalse(b.is_cached('foo'))
-            self.assertFalse(b.is_cached('bop'))
-
-        # Note: No sync should be necessary because of the invalidation
-        self.assertEqual(b['foo'], 'test')
-        self.assertEqual(b['baz'], 'test2')
 
     def test_cache_grow(self):
         import mmap
 
-        a = Dict(self.sock_path, 'var', share_connection=False)
-        b = Dict(self.sock_path, 'var', share_connection=False)
+        a = self.get_dict('var', share_connection=False)
+        b = self.get_dict('var', share_connection=False)
 
         count = mmap.PAGESIZE * 2
 
@@ -189,24 +181,24 @@ class BasicTests(unittest.TestCase):
             self.assertEqual(b[key], val)
 
     def test_missing_var(self):
-        a = Dict(self.sock_path, 'var')
+        a = self.get_dict('var')
 
         with self.assertRaises(NameError):
-            b = Dict(self.sock_path, 'does-not-exist', share_connection=False)
+            b = self.get_dict('does-not-exist', share_connection=False)
 
         with self.assertRaises(NameError):
-            b = Dict(self.sock_path, 'does-not-exist')
+            b = self.get_dict('does-not-exist')
 
     def test_var_factory(self):
         def factory(name):
             return Sqlite3DB(':memory:')
 
-        a = Dict(self.sock_path, 'var')
+        a = self.get_dict('var')
 
         self.server.db.set_db_factory(factory)
 
-        b = Dict(self.sock_path, 'test1', share_connection=False)
-        c = Dict(self.sock_path, 'test2')
+        b = self.get_dict('test1', share_connection=False)
+        c = self.get_dict('test2')
 
     def test_cross_var(self):
         def factory(name):
@@ -214,8 +206,8 @@ class BasicTests(unittest.TestCase):
 
         self.server.db.set_db_factory(factory)
 
-        a = Dict(self.sock_path, 'var', share_connection=False)
-        b = Dict(self.sock_path, 'test', share_connection=False)
+        a = self.get_dict('var', share_connection=False)
+        b = self.get_dict('test', share_connection=False)
 
         a['foo'] = 'bar'
         a.sync()
@@ -228,4 +220,84 @@ class BasicTests(unittest.TestCase):
 
         self.assertEqual(a['foo'], 'bar')
         self.assertEqual(b['foo'], 'baz')
+
+class NoCacheTests(Common):
+    use_cache = False
+
+    def test_cached(self):
+        a = self.get_dict('var', share_connection=False)
+        b = self.get_dict('var', share_connection=False)
+
+        a['foo'] = 'bar'
+        a.sync()
+        self.assertEqual(b['foo'], 'bar')
+        self.assertFalse(b.is_cached('foo'))
+        self.assertFalse(b.is_cached('not-present'))
+
+        a['foo'] = 'test'
+        b.invalidate('foo')
+        self.assertFalse(b.is_cached('foo'))
+
+        # Note: No sync should be necessary because of the invalidation
+        self.assertEqual(b['foo'], 'test')
+
+    def test_invalidate_all(self):
+        a = self.get_dict('var', share_connection=False)
+        b = self.get_dict('var', share_connection=False)
+
+        a['foo'] = 'bar'
+        a.sync()
+        self.assertEqual(b['foo'], 'bar')
+        self.assertFalse(b.is_cached('foo'))
+
+        with self.server.suspended():
+            a['foo'] = 'test'
+
+            b.invalidate_all()
+            self.assertFalse(b.is_cached('foo'))
+
+        # Note: No sync should be necessary because of the invalidation
+        self.assertEqual(b['foo'], 'test')
+
+class CacheTests(Common):
+    def test_cached(self):
+        a = self.get_dict('var', share_connection=False)
+        b = self.get_dict('var', share_connection=False)
+
+        a['foo'] = 'bar'
+        a.sync()
+        self.assertEqual(b['foo'], 'bar')
+        self.assertTrue(b.is_cached('foo'))
+        self.assertFalse(b.is_cached('not-present'))
+
+        with self.server.suspended():
+            a['foo'] = 'test'
+            self.assertEqual(b['foo'], 'bar')
+
+            b.invalidate('foo')
+            self.assertFalse(b.is_cached('foo'))
+
+        # Note: No sync should be necessary because of the invalidation
+        self.assertEqual(b['foo'], 'test')
+
+    def test_invalidate_all(self):
+        a = self.get_dict('var', share_connection=False)
+        b = self.get_dict('var', share_connection=False)
+
+        a['foo'] = 'bar'
+        a.sync()
+        self.assertEqual(b['foo'], 'bar')
+        self.assertTrue(b.is_cached('foo'))
+
+        with self.server.suspended():
+            a['foo'] = 'test'
+            self.assertEqual(b['foo'], 'bar')
+
+            b.invalidate_all()
+            self.assertFalse(b.is_cached('foo'))
+
+        # Note: No sync should be necessary because of the invalidation
+        self.assertEqual(b['foo'], 'test')
+
+
 
