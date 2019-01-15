@@ -1,4 +1,10 @@
 language: python
 python:
   - "3.4"
-script: ./setup.py test
+install:
+  - pip3 install coverage
+  - pip3 install coveralls
+script:
+  - coverage3 run --source=pyradur setup.py test
+after_success:
+  - coveralls

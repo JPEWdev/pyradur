@@ -2,6 +2,7 @@
 Fast Python IPC Dictionaries
 
 [![Build Status](https://travis-ci.org/JPEWdev/pyradur.svg?branch=master)](https://travis-ci.org/JPEWdev/pyradur.svg?branch=master)
+[![Coverage Status](https://coveralls.io/repos/github/JPEWdev/pyradur/badge.svg?branch=master)](https://coveralls.io/github/JPEWdev/pyradur?branch=master)
 
 Pyradur is designed to allow multiple Python processes to efficiently and
 quickly share a dictionary object, focusing on minimizing the amount of IPC as
