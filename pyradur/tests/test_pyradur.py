@@ -238,7 +238,7 @@ class NoCacheTests(Common):
         b.invalidate('foo')
         self.assertFalse(b.is_cached('foo'))
 
-        # Note: No sync should be necessary because of the invalidation
+        a.sync()
         self.assertEqual(b['foo'], 'test')
 
     def test_invalidate_all(self):
@@ -256,7 +256,7 @@ class NoCacheTests(Common):
             b.invalidate_all()
             self.assertFalse(b.is_cached('foo'))
 
-        # Note: No sync should be necessary because of the invalidation
+        a.sync()
         self.assertEqual(b['foo'], 'test')
 
 class CacheTests(Common):
@@ -277,7 +277,7 @@ class CacheTests(Common):
             b.invalidate('foo')
             self.assertFalse(b.is_cached('foo'))
 
-        # Note: No sync should be necessary because of the invalidation
+        a.sync()
         self.assertEqual(b['foo'], 'test')
 
     def test_invalidate_all(self):
@@ -296,8 +296,6 @@ class CacheTests(Common):
             b.invalidate_all()
             self.assertFalse(b.is_cached('foo'))
 
-        # Note: No sync should be necessary because of the invalidation
+        a.sync()
         self.assertEqual(b['foo'], 'test')
-
-
 
