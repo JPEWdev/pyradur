@@ -1,0 +1,293 @@
+# MIT License
+#
+# Copyright (c) 2018-2019 Garmin International or its subsidiaries
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+from .ipc import IPC, STATUS_OK, STATUS_NO_VAR, STATUS_NO_KEY
+from .shm import SHMSlot, SLOT_UNUSED, SLOT_OK, SLOT_OUT_OF_DATE
+from .db import DBManager
+from contextlib import contextmanager
+import logging
+import mmap
+import os
+import select
+import socket
+import threading
+
+logger = logging.getLogger('pyradur.server')
+
+class SockServer(object):
+    class Client(IPC):
+        def __init__(self, sock, addr, db, report_change):
+            super().__init__(sock, logger=logger)
+            self.addr = addr
+            self.buffer = []
+            self.db = db
+            self.shm_fd = -1
+            self.shm = None
+            self.cache = {}
+            self.report_change = report_change
+
+        def close(self):
+            self.close_shm()
+            super().close()
+
+        def close_shm(self):
+            if self.shm is not None:
+                self.shm.close()
+            self.shm = None
+
+            if self.shm_fd != -1:
+                os.close(self.shm_fd)
+            self.shm_fd = -1
+
+        def mark_change(self, var, key):
+            k = (var, key)
+            if k in self.cache:
+                self.cache[k].status = SLOT_OUT_OF_DATE
+
+        def _send_response(self, response):
+            self.send_message({'response': response})
+
+        def _add_slot(self, req):
+            slot = req.get('slot', None)
+            if slot is not None and self.shm is not None:
+                logger.debug('Added slot %d', slot)
+                k = (req['var'], req['key'])
+                self.cache[k] = SHMSlot(slot, self.shm, logger=logger)
+
+        def _db_op(self, var, key, op):
+            try:
+                db = self.db.get_db(var)
+                try:
+                    op(db)
+                    return [STATUS_OK]
+                except KeyError:
+                    logger.debug('No key %s.%s', var, key)
+                    return [STATUS_NO_KEY, key]
+            except KeyError:
+                return [STATUS_NO_VAR, var]
+
+        def _process_get(self, m, fds):
+            def op(db):
+                response['value'] = db[key]
+
+            var = m['var']
+            key = m['key']
+
+            response = {'seq': m['seq']}
+            response['status'] = self._db_op(var, key, op)
+
+            self._send_response(response)
+            self._add_slot(m)
+
+        def _process_set(self, m, fds):
+            def op(db):
+                db[key] = m['value']
+
+            var = m['var']
+            key = m['key']
+
+            self._db_op(var, key, op)
+            self._add_slot(m)
+            self.report_change(self, var, key)
+
+        def _process_del(self, m, fds):
+            def op(db):
+                del db[key]
+
+            var = m['var']
+            key = m['key']
+
+            self._db_op(var, key, op)
+            self._add_slot(m)
+            self.report_change(self, var, key)
+
+        def _process_shm(self, m, fds):
+            self.close_shm()
+
+            self.shm_size = m['size']
+
+            if self.shm_size > 0:
+                self.shm_fd = os.dup(fds[0])
+
+                self.shm = mmap.mmap(self.shm_fd, self.shm_size)
+
+            self._send_response({
+                'seq': m['seq'],
+                'status': [STATUS_OK]
+                })
+            logger.debug("shm fd is now %d", self.shm_fd)
+
+        def _process_release(self, m, fds):
+            var = m['var']
+            key = m['key']
+
+            k = (var, key)
+
+            if k in self.cache:
+                logger.debug('Released slot %d', self.cache[k].slot)
+                self.cache[k].status = SLOT_UNUSED
+                del self.cache[k]
+
+        def _process_release_all(self, m, fds):
+            if self.shm is not None:
+                self.shm[:] = bytearray(self.shm_size)
+            self.cache = {}
+
+        def _process_sync(self, m, fds):
+            self._send_response({
+                'seq': m['seq'],
+                'status': [STATUS_OK]
+                })
+
+        def _process_validate_var(self, m, fds):
+            response = {'seq': m['seq']}
+            response['status'] = self._db_op(m['var'], None, lambda db: None)
+
+            self._send_response(response)
+
+        def handle_poll(self, events):
+            if events & select.EPOLLIN:
+                self.process_receive({
+                    'get': self._process_get,
+                    'set': self._process_set,
+                    'del': self._process_del,
+                    'shm': self._process_shm,
+                    'release': self._process_release,
+                    'release-all': self._process_release_all,
+                    'sync': self._process_sync,
+                    'validate-var': self._process_validate_var,
+                    })
+
+
+    def __init__(self, sock_path, db=None):
+        self.sock_path = sock_path
+        if db is None:
+            self.db = DBManager()
+        else:
+            self.db = db
+        self.clients = {}
+
+        try:
+            os.unlink(self.sock_path)
+        except OSError:
+            pass
+
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.setblocking(False)
+        self.sock.bind(self.sock_path)
+        self.sock.listen(10)
+
+        self.epoll = select.epoll()
+        self.epoll.register(self.sock.fileno(), select.EPOLLIN)
+
+        self.done = threading.Event()
+        self.done.set()
+
+        self._suspended = 0
+        self._suspended_cond = threading.Condition()
+
+    def close(self):
+        self.sock.close()
+
+    def _report_change(self, source, var, key):
+        for c in self.clients.values():
+            if c is not source:
+                c.mark_change(var, key)
+
+    def _handle_epoll_events(self, events):
+        for fd, event_type in events:
+            if fd == self.sock.fileno():
+                try:
+                    conn, addr = self.sock.accept()
+                    logger.debug('Got client %d, %s', conn.fileno(), addr)
+
+                    self.clients[conn.fileno()] = self.Client(conn, addr, self.db, self._report_change)
+
+                    self.epoll.register(conn.fileno(), select.EPOLLIN)
+                except socket.timeout:
+                    pass
+
+            elif fd in self.clients:
+                try:
+                    self.clients[fd].handle_poll(event_type)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+
+                if event_type & select.EPOLLHUP:
+                    logging.debug('Client %d disconnected', fd)
+                    self.clients[fd].close()
+                    del self.clients[fd]
+
+    def get_fd(self):
+        return self.epoll.fileno()
+
+    def handle_event(self):
+        events = self.epoll.poll(0)
+        self._handle_epoll_events(events)
+
+    def suspend(self):
+        with self._suspended_cond:
+            self._suspended += 1
+
+    def resume(self):
+        with self._suspended_cond:
+            if self._suspended > 0:
+                self._suspended -= 1
+            self._suspended_cond.notify_all()
+
+    @contextmanager
+    def suspended(self):
+        self.suspend()
+        try:
+            yield None
+        finally:
+            self.resume()
+
+    def service_actions(self):
+        pass
+
+    def serve_forever(self, poll_interval=0.5):
+        self.keep_serving = True
+        self.done.clear()
+
+        while self.keep_serving:
+            events = self.epoll.poll(poll_interval)
+
+            retry = False
+            with self._suspended_cond:
+                while self._suspended:
+                    self._suspended_cond.wait()
+                    retry = True
+
+            if retry:
+                continue
+
+            self._handle_epoll_events(events)
+            self.service_actions()
+
+        self.done.set()
+
+    def shutdown(self):
+        self.keep_serving = False
+        self.done.wait()
+
+
