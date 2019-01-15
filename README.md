@@ -1,7 +1,7 @@
 # pyradur
 Fast Python IPC Dictionaries
 
-[![Build Status](https://travis-ci.org/JPEWdev/pyradur.svg?branch=master)](https://travis-ci.org/JPEWdev/pyradur.svg?branch=master)
+[![Build Status](https://travis-ci.org/JPEWdev/pyradur.svg?branch=master)](https://travis-ci.org/JPEWdev/pyradur)
 [![Coverage Status](https://coveralls.io/repos/github/JPEWdev/pyradur/badge.svg?branch=master)](https://coveralls.io/github/JPEWdev/pyradur?branch=master)
 
 Pyradur is designed to allow multiple Python processes to efficiently and
