@@ -164,8 +164,8 @@ class SockServer(object):
 
             self._send_response(response)
 
-        def handle_poll(self, events):
-            if events & select.EPOLLIN:
+        def handle_poll(self, event):
+            if event.read:
                 self.process_receive({
                     'get': self._process_get,
                     'set': self._process_set,
@@ -177,6 +177,28 @@ class SockServer(object):
                     'validate-var': self._process_validate_var,
                     })
 
+    class Event(object):
+        def __init__(self, fd, read, hup):
+            self.fd = fd
+            self.read = bool(read)
+            self.hup = bool(hup)
+
+    class EPoll(object):
+        def __init__(self):
+            self.epoll = select.epoll()
+
+        def register(self, fd):
+            self.epoll.register(fd, select.EPOLLIN)
+
+        def unregister(self, fd):
+            self.epoll.unregister(fd)
+
+        def poll(self, timeout):
+            return [SockServer.Event(fd, events & select.EPOLLIN, events & select.EPOLLHUP)
+                    for fd, events in self.epoll.poll(timeout)]
+
+        def fileno(self):
+            return self.epoll.fileno()
 
     def __init__(self, sock_path, db=None):
         self.sock_path = sock_path
@@ -196,8 +218,16 @@ class SockServer(object):
         self.sock.bind(self.sock_path)
         self.sock.listen(10)
 
-        self.epoll = select.epoll()
-        self.epoll.register(self.sock.fileno(), select.EPOLLIN)
+        for p in (self.EPoll,):
+            try:
+                self.poll = p()
+                break
+            except AttributeError:
+                pass
+        else:
+            raise Exception("No suitable poll interface found")
+
+        self.poll.register(self.sock.fileno())
 
         self.done = threading.Event()
         self.done.set()
@@ -213,36 +243,37 @@ class SockServer(object):
             if c is not source:
                 c.mark_change(var, key)
 
-    def _handle_epoll_events(self, events):
-        for fd, event_type in events:
-            if fd == self.sock.fileno():
+    def _handle_poll_events(self, events):
+        for e in events:
+            if e.fd == self.sock.fileno():
                 try:
                     conn, addr = self.sock.accept()
                     logger.debug('Got client %d, %s', conn.fileno(), addr)
 
                     self.clients[conn.fileno()] = self.Client(conn, addr, self.db, self._report_change)
 
-                    self.epoll.register(conn.fileno(), select.EPOLLIN)
+                    self.poll.register(conn.fileno())
                 except socket.timeout:
                     pass
 
-            elif fd in self.clients:
+            elif e.fd in self.clients:
                 try:
-                    self.clients[fd].handle_poll(event_type)
+                    self.clients[e.fd].handle_poll(e)
                 except (BrokenPipeError, ConnectionResetError):
                     pass
 
-                if event_type & select.EPOLLHUP:
-                    logging.debug('Client %d disconnected', fd)
-                    self.clients[fd].close()
-                    del self.clients[fd]
+                if e.hup:
+                    logging.debug('Client %d disconnected', e.fd)
+                    self.poll.unregister(e.fd)
+                    self.clients[e.fd].close()
+                    del self.clients[e.fd]
 
     def get_fd(self):
-        return self.epoll.fileno()
+        return self.poll.fileno()
 
     def handle_event(self):
-        events = self.epoll.poll(0)
-        self._handle_epoll_events(events)
+        events = self.poll.poll(0)
+        self._handle_poll_events(events)
 
     def suspend(self):
         with self._suspended_cond:
@@ -270,7 +301,7 @@ class SockServer(object):
         self.done.clear()
 
         while self.keep_serving:
-            events = self.epoll.poll(poll_interval)
+            events = self.poll.poll(poll_interval)
 
             retry = False
             with self._suspended_cond:
@@ -281,7 +312,7 @@ class SockServer(object):
             if retry:
                 continue
 
-            self._handle_epoll_events(events)
+            self._handle_poll_events(events)
             self.service_actions()
 
         self.done.set()
