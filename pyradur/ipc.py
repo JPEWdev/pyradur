@@ -21,6 +21,7 @@
 # SOFTWARE.
 
 import array
+import copy
 import json
 import logging
 import os
@@ -40,25 +41,41 @@ class IPC(object):
     def __init__(self, sock, logger=logger):
         self.sock = sock
         self.recv_buffer = []
-        self.recv_fds = array.array("i")
+        self.recv_fds = []
         self._finalized = weakref.finalize(self, self.close)
         self.logger = logger
+
+    def __del__(self):
+        for fd in self.recv_fds:
+            os.close(fd)
 
     def close(self):
         self.sock.close()
 
     def send_message(self, r, fds=[]):
+        if fds:
+            r = copy.copy(r)
+            r['fds'] = len(fds)
         msg = json.dumps(r)
         self.logger.debug('sending message %s, %s', msg, fds)
         ret = self.sock.sendmsg([(msg + '\n').encode('utf-8')], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", fds))])
 
-    def process_receive(self, handlers):
-        buf, ancdata, flags, addr = self.sock.recvmsg(MAX_MESSAGE, socket.CMSG_LEN(MAX_FDS * self.recv_fds.itemsize))
+    def _recv(self, buflen):
+        recv_fds = array.array("i")
+
+        buf, ancdata, flags, addr = self.sock.recvmsg(buflen, socket.CMSG_LEN(MAX_FDS * recv_fds.itemsize))
 
         for cmsg_level, cmsg_type, cmsg_data in ancdata:
             if (cmsg_level == socket.SOL_SOCKET and cmsg_type == socket.SCM_RIGHTS):
                 # Append data, ignoring any truncated integers at the end.
-                self.recv_fds.frombytes(cmsg_data[:len(cmsg_data) - (len(cmsg_data) % self.recv_fds.itemsize)])
+                recv_fds.frombytes(cmsg_data[:len(cmsg_data) - (len(cmsg_data) % recv_fds.itemsize)])
+                self.recv_fds.extend(list(recv_fds))
+                self.logger.debug("Received fds: %s, %s", list(recv_fds), self.recv_fds)
+
+        return buf
+
+    def process_receive(self, handlers):
+        buf = self._recv(MAX_MESSAGE)
 
         new_messages = buf.decode('utf-8').splitlines(True)
 
@@ -70,24 +87,25 @@ class IPC(object):
 
         while self.recv_buffer and self.recv_buffer[0].endswith('\n'):
             s = self.recv_buffer.pop(0).rstrip()
-            self.logger.debug('Got message: %s, %s', s, list(self.recv_fds))
             message = json.loads(s)
 
-            # It isn't possible to tell which message the fds are associated
-            # with, so send them with each one. The last handler *should* be
-            # the correct one. Clients are required to make synchronous calls
-            # when sending file descriptors to ensure this works correctly
-            #
+            num_fds = message.get('fds', 0)
+
+            if len(self.recv_fds) < num_fds:
+                raise Exception("Not enough file descriptors. Want %d, have %d" % (num_fds, len(num_fds)))
+
             # If the handler needs to keep around a file descriptor, it must
             # dup them since they will be closed later
+            message_fds = self.recv_fds[:num_fds]
+            self.recv_fds = self.recv_fds[num_fds:]
+
+            self.logger.debug('Got message: %s, %s', s, message_fds)
 
             for k, v in handlers.items():
                 if k in message:
-                    v(message[k], list(self.recv_fds))
+                    v(message[k], message_fds)
 
-        # Close all received fds
-        for fd in self.recv_fds:
-            os.close(fd)
-        self.recv_fds = array.array("i")
-
+            # Close all received fds
+            for fd in message_fds:
+                os.close(fd)
 
