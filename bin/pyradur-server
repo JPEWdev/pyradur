@@ -1,4 +1,5 @@
 #! /usr/bin/env python3
+#
 # MIT License
 #
 # Copyright (c) 2018-2019 Garmin International or its subsidiaries
@@ -21,25 +22,37 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-import setuptools
+import argparse
+import logging
+import pyradur.db
+import pyradur.server
+import sys
 
-with open('README.md', 'r', encoding='utf-8') as f:
-    long_description = f.read()
+def main():
+    parser = argparse.ArgumentParser(description='Pyradur IPC Server')
+    parser.add_argument('socket', help='Path to server socket')
+    parser.add_argument('--sqlite', metavar=('NAME', 'PATH'), nargs=2, 
+            action='append', default=[], help='Add sqlite database')
+    parser.add_argument('--debug', metavar='LEVEL', default='WARNING',
+            help='Set debug log level. Default %(default)s')
 
-setuptools.setup(
-    name='pyradur',
-    version='0.1.dev0',
-    author='Joshua Watt',
-    author_email='JPEWhacker@gmail.com',
-    url="https://github.com/JPEWdev/pyradur",
-    packages=setuptools.find_packages(),
-    setup_requires=['nose>=1.0'],
-    test_suite='nose.collector',
-    classifiers=[
-        "Programming Language :: Python :: 3",
-        "License :: OSI Approved :: MIT License",
-        "Operating System :: OS Independent"
-        ],
-    scripts=['bin/pyradur-server', 'bin/pyradur-client'],
-    )
+    args = parser.parse_args()
 
+    root = logging.getLogger()
+    root.setLevel(args.debug)
+
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(args.debug)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    root.addHandler(handler)
+
+    server = pyradur.server.SockServer(args.socket)
+
+    for s in args.sqlite:
+        server.db.add_db(s[0], pyradur.db.Sqlite3DB(s[1]))
+
+    server.serve_forever()
+
+if __name__ == "__main__":
+    sys.exit(main())
