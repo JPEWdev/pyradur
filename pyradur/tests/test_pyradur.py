@@ -28,6 +28,8 @@ import threading
 import unittest
 import shutil
 import os
+import logging
+import sys
 
 class CommonTests(object):
     use_cache = True
@@ -38,6 +40,16 @@ class CommonTests(object):
         self.server.serve_forever()
 
     def setUp(self):
+        root = logging.getLogger()
+        root.setLevel(logging.DEBUG)
+
+        self.handler = logging.StreamHandler(sys.stdout)
+        self.handler.setLevel(logging.DEBUG)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        self.handler.setFormatter(formatter)
+        root.addHandler(self.handler)
+        self.addCleanup(root.removeHandler, self.handler)
+
         self.tempdir = tempfile.mkdtemp(prefix='pyradur-')
         self.addCleanup(shutil.rmtree, self.tempdir, ignore_errors=True)
 
