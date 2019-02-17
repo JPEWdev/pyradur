@@ -63,7 +63,7 @@ class IPC(object):
     def _recv(self, buflen):
         recv_fds = array.array("i")
 
-        buf, ancdata, flags, addr = self.sock.recvmsg(buflen, socket.CMSG_LEN(MAX_FDS * recv_fds.itemsize))
+        buf, ancdata, flags, addr = self.sock.recvmsg(buflen, socket.CMSG_SPACE(MAX_FDS * recv_fds.itemsize))
 
         for cmsg_level, cmsg_type, cmsg_data in ancdata:
             if (cmsg_level == socket.SOL_SOCKET and cmsg_type == socket.SCM_RIGHTS):
