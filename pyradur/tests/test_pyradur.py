@@ -33,11 +33,16 @@ import sys
 
 class CommonTests(object):
     use_cache = True
+    close_on_cleanup = True
 
     def _server_thread(self, event):
         self.server.db.add_db('var', Sqlite3DB(':memory:'))
         event.set()
         self.server.serve_forever()
+
+        # Process any outstanding events until the queue is empty
+        while self.server.handle_request():
+            pass
 
     def setUp(self):
         root = logging.getLogger()
@@ -63,15 +68,23 @@ class CommonTests(object):
             self.server_thread.start()
             event.wait()
 
-            self.addCleanup(self.server_thread.join)
             self.addCleanup(self.server.close)
+            self.addCleanup(self.check_server)
+            self.addCleanup(self.server_thread.join)
             self.addCleanup(self.server.shutdown)
         except Exception as e:
             self.server.close()
             raise e
 
+    def check_server(self):
+        # Check that all clients have disconnected
+        self.assertDictEqual(self.server.clients, {})
+
     def get_dict(self, name, share_connection=True):
-        return Dict(self.sock_path, name, use_cache=self.use_cache, share_connection=share_connection)
+        d = Dict(self.sock_path, name, use_cache=self.use_cache, share_connection=share_connection)
+        if self.close_on_cleanup:
+            self.addCleanup(lambda: d.close())
+        return d
 
     def test_basic_get_set(self):
         d = self.get_dict('var')
@@ -141,33 +154,6 @@ class CommonTests(object):
         a.sync()
         self.assertTrue('foo' in b)
         self.assertFalse('bar' in b)
-
-    def test_close(self):
-        import gc
-
-        a = self.get_dict('var')
-        b = self.get_dict('var', share_connection=False)
-        c = self.get_dict('var')
-
-        a['foo'] = 'bar'
-        a.sync()
-
-        self.assertEqual(b['foo'], 'bar')
-        self.assertEqual(c['foo'], 'bar')
-
-        a.close()
-
-        c['baz'] = 'bat'
-        c.sync()
-
-        self.assertEqual(b['baz'], 'bat')
-
-        del c
-        del a
-
-        gc.collect()
-
-        b['test'] = 'blah'
 
 
     def test_cache_grow(self):
@@ -310,4 +296,30 @@ class CacheTests(CommonTests, unittest.TestCase):
 
         a.sync()
         self.assertEqual(b['foo'], 'test')
+
+class ImplicitCloseTests(CacheTests):
+    close_on_cleanup = False
+
+    def test_close(self):
+        a = self.get_dict('var')
+        b = self.get_dict('var', share_connection=False)
+        c = self.get_dict('var')
+
+        a['foo'] = 'bar'
+        a.sync()
+
+        self.assertEqual(b['foo'], 'bar')
+        self.assertEqual(c['foo'], 'bar')
+
+        a.close()
+
+        c['baz'] = 'bat'
+        c.sync()
+
+        self.assertEqual(b['baz'], 'bat')
+
+        del c
+        del a
+
+        b['test'] = 'blah'
 

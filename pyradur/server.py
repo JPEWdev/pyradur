@@ -45,9 +45,9 @@ class SockServer(object):
             self.cache = {}
             self.report_change = report_change
 
-        def close(self):
+        def _do_close(self):
             self.close_shm()
-            super().close()
+            super()._do_close()
 
         def close_shm(self):
             if self.shm is not None:
@@ -276,7 +276,7 @@ class SockServer(object):
             if e.fd == self.sock.fileno():
                 try:
                     conn, addr = self.sock.accept()
-                    logger.debug('Got client %d, %s', conn.fileno(), addr)
+                    logger.debug('New client %d, %s', conn.fileno(), addr)
 
                     self.clients[conn.fileno()] = self.Client(conn, addr, self.db, self._report_change)
 
@@ -285,15 +285,16 @@ class SockServer(object):
                     pass
 
             elif e.fd in self.clients:
+                client = self.clients[e.fd]
                 try:
-                    self.clients[e.fd].handle_poll(e)
+                    client.handle_poll(e)
                 except (BrokenPipeError, ConnectionResetError):
                     pass
 
-                if e.hup:
+                if e.hup or client.eof:
                     logging.debug('Client %d disconnected', e.fd)
                     self.poll.unregister(e.fd)
-                    self.clients[e.fd].close()
+                    client.close()
                     del self.clients[e.fd]
 
     def get_fd(self):
@@ -323,6 +324,11 @@ class SockServer(object):
 
     def service_actions(self):
         pass
+
+    def handle_request(self):
+        events = self.poll.poll(0)
+        self._handle_poll_events(events)
+        return bool(events)
 
     def serve_forever(self, poll_interval=0.5):
         self.keep_serving = True
