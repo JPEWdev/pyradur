@@ -130,6 +130,9 @@ class SockServer(object):
 
                 self.shm = mmap.mmap(self.shm_fd, self.shm_size)
 
+            for c in self.cache.values():
+                c.shm = self.shm
+
             self._send_response({
                 'seq': m['seq'],
                 'status': [STATUS_OK]

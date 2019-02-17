@@ -90,7 +90,19 @@ class Client(IPC):
         self._wait_for_response()
 
     def _grow_shm(self):
-        self.shm.resize(self.shm.size() + mmap.PAGESIZE)
+        new_size = self.shm.size() + mmap.PAGESIZE
+
+        # Some systems don't allow resizing a mmap (e.g. FreeBSD), so we do do
+        # it manually for consistency. This is safe because the size is only
+        # ever increased
+        os.ftruncate(self.shm_fd, new_size)
+        old_shm = self.shm
+        self.shm = mmap.mmap(self.shm_fd, 0)
+        old_shm.close()
+
+        for c in self.cache.values():
+            c.shm = self.shm
+
         self._send_shm_message()
 
     def _next_seq(self):
