@@ -26,7 +26,6 @@ import json
 import logging
 import os
 import socket
-import weakref
 
 logger = logging.getLogger('pyradur.ipc')
 
@@ -42,15 +41,23 @@ class IPC(object):
         self.sock = sock
         self.recv_buffer = []
         self.recv_fds = []
-        self._finalized = weakref.finalize(self, self.close)
         self.logger = logger
+        self.eof = False
+        self.is_open = True
 
     def __del__(self):
+        self.close()
+
+    def _do_close(self):
+        self.logger.debug('closing %s', id(self))
+        self.sock.close()
         for fd in self.recv_fds:
             os.close(fd)
 
     def close(self):
-        self.sock.close()
+        if self.is_open:
+            self._do_close()
+            self.is_open = False
 
     def send_message(self, r, fds=[]):
         if fds:
@@ -76,6 +83,9 @@ class IPC(object):
 
     def process_receive(self, handlers):
         buf = self._recv(MAX_MESSAGE)
+
+        if not buf:
+            self.eof = True
 
         new_messages = buf.decode('utf-8').splitlines(True)
 

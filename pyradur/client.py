@@ -56,12 +56,12 @@ class Client(IPC):
 
             self._send_shm_message()
 
-    def close(self):
+    def _do_close(self):
         if self.use_cache:
             self.shm.close()
             os.close(self.shm_fd)
 
-        super().close()
+        super()._do_close()
 
     def validate_var(self, var):
         if var in self.known_vars:
