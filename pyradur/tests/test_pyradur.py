@@ -36,13 +36,19 @@ class CommonTests(object):
     close_on_cleanup = True
 
     def _server_thread(self, event):
-        self.server.db.add_db('var', Sqlite3DB(':memory:'))
-        event.set()
-        self.server.serve_forever()
+        try:
+            self.server.db.add_db('var', Sqlite3DB(':memory:'))
+            event.set()
+            self.server.serve_forever()
 
-        # Process any outstanding events until the queue is empty
-        while self.server.handle_request():
-            pass
+            # Process any outstanding events until the queue is empty
+            while self.server.handle_request():
+                pass
+        finally:
+            # Close down the server. This prevents the main thread from being
+            # stuck blocking on a response from the server in the event that it
+            # has an exception
+            self.server.close()
 
     def setUp(self):
         root = logging.getLogger()
@@ -68,7 +74,6 @@ class CommonTests(object):
             self.server_thread.start()
             event.wait()
 
-            self.addCleanup(self.server.close)
             self.addCleanup(self.check_server)
             self.addCleanup(self.server_thread.join)
             self.addCleanup(self.server.shutdown)

@@ -266,6 +266,9 @@ class SockServer(object):
     def close(self):
         self.sock.close()
 
+        for client in self.clients.values():
+            client.close()
+
     def _report_change(self, source, var, key):
         for c in self.clients.values():
             if c is not source:
@@ -334,22 +337,23 @@ class SockServer(object):
         self.keep_serving = True
         self.done.clear()
 
-        while self.keep_serving:
-            events = self.poll.poll(poll_interval)
+        try:
+            while self.keep_serving:
+                events = self.poll.poll(poll_interval)
 
-            retry = False
-            with self._suspended_cond:
-                while self._suspended:
-                    self._suspended_cond.wait()
-                    retry = True
+                retry = False
+                with self._suspended_cond:
+                    while self._suspended:
+                        self._suspended_cond.wait()
+                        retry = True
 
-            if retry:
-                continue
+                if retry:
+                    continue
 
-            self._handle_poll_events(events)
-            self.service_actions()
-
-        self.done.set()
+                self._handle_poll_events(events)
+                self.service_actions()
+        finally:
+            self.done.set()
 
     def shutdown(self):
         self.keep_serving = False
