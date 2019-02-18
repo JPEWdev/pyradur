@@ -40,14 +40,17 @@ class Dict(object):
                 client = client_ref()
                 try:
                     if client is not None and os.path.samefile(sock_path, client.sock_path):
+                        logger.debug('Sharing existing client %s', id(client))
                         break
                 except FileNotFoundError:
                     pass
             else:
                 client = Client(sock_path, use_cache)
                 self._shared_clients.append(weakref.ref(client, self._cleanup_client))
+                logger.debug('New shared client %s', id(client))
         else:
             client = Client(sock_path, use_cache)
+            logger.debug('New non-shared client %s', id(client))
 
         self.client = client
         self.var = var
