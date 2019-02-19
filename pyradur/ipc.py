@@ -49,7 +49,7 @@ class IPC(object):
         self.close()
 
     def _do_close(self):
-        logger.debug('closing %s', id(self))
+        self.logger.debug('closing %s', id(self))
         self.sock.close()
         for fd in self.recv_fds:
             os.close(fd)
@@ -65,7 +65,9 @@ class IPC(object):
             r['fds'] = len(fds)
         msg = json.dumps(r)
         self.logger.debug('sending message %s, %s', msg, fds)
-        ret = self.sock.sendmsg([(msg + '\0').encode('utf-8')], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", fds))])
+        msg = (msg + '\0').encode('utf-8')
+        ret = self.sock.sendmsg([msg], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", fds))])
+        self.logger.debug('Send %d of %d bytes', ret, len(msg))
 
     def _recv(self, buflen):
         recv_fds = array.array("i")
@@ -89,7 +91,7 @@ class IPC(object):
             self.logger.debug('EOF')
             self.eof = True
 
-        self.logger.debug('got message: %s', buf.decode('utf-8'))
+        self.logger.debug('Got buffer: %s', buf.decode('utf-8'))
         self.recv_buffer.extend(buf)
 
         idx = self.recv_buffer.find(b'\x00')

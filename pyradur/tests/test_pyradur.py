@@ -44,6 +44,8 @@ class CommonTests(object):
             # Process any outstanding events until the queue is empty
             while self.server.handle_request():
                 pass
+        except Exception as e:
+            logging.exception('Server raised %s', e, exc_info=True)
         finally:
             # Close down the server. This prevents the main thread from being
             # stuck blocking on a response from the server in the event that it
