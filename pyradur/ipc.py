@@ -70,6 +70,7 @@ class IPC(object):
     def _recv(self, buflen):
         recv_fds = array.array("i")
 
+        self.logger.debug('waiting for message')
         buf, ancdata, flags, addr = self.sock.recvmsg(buflen, socket.CMSG_SPACE(MAX_FDS * recv_fds.itemsize))
 
         for cmsg_level, cmsg_type, cmsg_data in ancdata:
@@ -85,8 +86,10 @@ class IPC(object):
         buf = self._recv(MAX_MESSAGE)
 
         if not buf:
+            self.logger.debug('EOF')
             self.eof = True
 
+        self.logger.debug('got message: %s', buf.decode('utf-8'))
         new_messages = buf.decode('utf-8').splitlines(True)
 
         # Check for messages that span the buffer boundary
