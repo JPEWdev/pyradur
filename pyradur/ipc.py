@@ -39,7 +39,7 @@ STATUS_NO_KEY = 'no_key'
 class IPC(object):
     def __init__(self, sock, logger=logger):
         self.sock = sock
-        self.recv_buffer = []
+        self.recv_buffer = bytearray()
         self.recv_fds = []
         self.logger = logger
         self.eof = False
@@ -65,7 +65,7 @@ class IPC(object):
             r['fds'] = len(fds)
         msg = json.dumps(r)
         self.logger.debug('sending message %s, %s', msg, fds)
-        ret = self.sock.sendmsg([(msg + '\n').encode('utf-8')], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", fds))])
+        ret = self.sock.sendmsg([(msg + '\0').encode('utf-8')], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", fds))])
 
     def _recv(self, buflen):
         recv_fds = array.array("i")
@@ -90,16 +90,14 @@ class IPC(object):
             self.eof = True
 
         self.logger.debug('got message: %s', buf.decode('utf-8'))
-        new_messages = buf.decode('utf-8').splitlines(True)
+        self.recv_buffer.extend(buf)
 
-        # Check for messages that span the buffer boundary
-        if self.recv_buffer and not self.recv_buffer[-1].endswith('\n'):
-            self.recv_buffer[-1] += new_messages.pop(0)
+        idx = self.recv_buffer.find(b'\x00')
 
-        self.recv_buffer.extend(new_messages)
+        while idx != -1:
+            s = self.recv_buffer[:idx].decode('utf-8')
+            self.recv_buffer = self.recv_buffer[idx + 1:]
 
-        while self.recv_buffer and self.recv_buffer[0].endswith('\n'):
-            s = self.recv_buffer.pop(0).rstrip()
             message = json.loads(s)
 
             num_fds = message.get('fds', 0)
@@ -121,4 +119,6 @@ class IPC(object):
             # Close all received fds
             for fd in message_fds:
                 os.close(fd)
+
+            idx = self.recv_buffer.find(b'\x00')
 
