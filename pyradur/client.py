@@ -54,7 +54,10 @@ class Client(IPC):
 
             self.shm = mmap.mmap(self.shm_fd, 0)
 
+            self.logger.debug('Initial shm size is %d', mmap.PAGESIZE)
+
             self._send_shm_message()
+
 
     def _do_close(self):
         if self.use_cache:
@@ -91,6 +94,8 @@ class Client(IPC):
 
     def _grow_shm(self):
         new_size = self.shm.size() + mmap.PAGESIZE
+
+        self.logger.debug('Growing shm %d -> %d', self.shm.size(), new_size)
 
         # Some systems don't allow resizing a mmap (e.g. FreeBSD), so we do do
         # it manually for consistency. This is safe because the size is only
