@@ -236,6 +236,7 @@ class SockServer(object):
         self._suspended_cond = threading.Condition()
 
     def close(self):
+        logger.debug('Closing server')
         self.sock.close()
 
         for client in self.clients.values():
@@ -328,6 +329,7 @@ class SockServer(object):
             self.done.set()
 
     def shutdown(self):
+        logger.debug('shutdown')
         self.keep_serving = False
         self.done.wait()
 

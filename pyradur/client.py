@@ -54,6 +54,8 @@ class Client(IPC):
 
             self.shm = mmap.mmap(self.shm_fd, 0)
 
+            self.logger.debug('Initial shm size is %d', mmap.PAGESIZE)
+
             self._send_shm_message()
 
     def _do_close(self):
