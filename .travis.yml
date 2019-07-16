@@ -5,6 +5,7 @@ install:
   - pip3 install coverage
   - pip3 install coveralls
 script:
-  - coverage3 run setup.py test
+  - coverage3 run -m unittest -vb
+  - ./setup.py install
 after_success:
   - coveralls
