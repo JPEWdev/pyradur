@@ -33,6 +33,7 @@ setuptools.setup(
     author_email='JPEWhacker@gmail.com',
     url="https://github.com/JPEWdev/pyradur",
     packages=setuptools.find_packages(),
+    setup_requires=['nose>=1.0'],
     test_suite='nose.collector',
     classifiers=[
         "Programming Language :: Python :: 3",
